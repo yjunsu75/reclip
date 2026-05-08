@@ -1,0 +1,8 @@
+services:
+  reclip:
+    build: .
+    ports:
+      - "8800:8899"
+    volumes:
+      - ./downloads:/app/downloads
+    restart: unless-stopped

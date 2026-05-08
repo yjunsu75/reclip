@@ -1,0 +1,13 @@
+venv/
+downloads/
+__pycache__/
+*.pyc
+.git/
+.agents/
+.codex/
+.DS_Store
+.env
+.env.local
+.env.production
+.env.development
+assets/*.mov

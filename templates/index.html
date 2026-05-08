@@ -141,6 +141,47 @@
     .fetch-btn:active { transform: scale(0.98); }
     .fetch-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
+    .timeout-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-top: 10px;
+      margin-bottom: 6px;
+    }
+    .timeout-label {
+      font-size: 0.68rem;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .timeout-select,
+    .timeout-input {
+      height: 36px;
+      border: 1.5px solid var(--card-border);
+      border-radius: 10px;
+      background: var(--card);
+      color: var(--fg);
+      font-family: 'DM Mono', monospace;
+      font-size: 0.72rem;
+      outline: none;
+    }
+    .timeout-select {
+      flex: 1;
+      padding: 0 12px;
+      cursor: pointer;
+    }
+    .timeout-input {
+      width: 96px;
+      padding: 0 10px;
+    }
+    .timeout-select:focus,
+    .timeout-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(232, 93, 42, 0.08);
+    }
+    .timeout-input[hidden] { display: none; }
+
     /* Cards */
     .cards { margin-top: 24px; }
 
@@ -270,6 +311,33 @@
     .card-status.done { color: var(--success); }
     .card-status.error { color: var(--error); }
 
+    .progress-wrap {
+      width: 100%;
+      min-width: 180px;
+      margin-top: 2px;
+    }
+    .progress-track {
+      width: 100%;
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(58, 58, 56, 0.12);
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 0.3s ease;
+    }
+    .progress-text {
+      margin-top: 6px;
+      font-size: 0.64rem;
+      line-height: 1.35;
+      color: var(--muted);
+      word-break: break-word;
+    }
+
     .q-chip {
       padding: 4px 10px;
       border: 1.5px solid var(--card-border);
@@ -377,6 +445,9 @@
       .card-title { white-space: normal; }
       .controls { flex-wrap: wrap; }
       .fetch-btn { width: 100%; }
+      .timeout-row { flex-wrap: wrap; }
+      .timeout-label { width: 100%; }
+      .timeout-input { flex: 1; min-width: 120px; }
     }
   </style>
 </head>
@@ -398,6 +469,16 @@
       <button class="fetch-btn" id="goBtn" onclick="go()">Fetch</button>
     </div>
 
+    <div class="timeout-row">
+      <label class="timeout-label" for="timeoutMode">Timeout</label>
+      <select class="timeout-select" id="timeoutMode" onchange="setTimeoutMode()">
+        <option value="default">Default 5 min</option>
+        <option value="custom">Custom minutes</option>
+        <option value="none">No timeout</option>
+      </select>
+      <input class="timeout-input" id="timeoutMinutes" type="number" min="1" step="1" value="30" hidden>
+    </div>
+
     <div id="cards" class="cards"></div>
 
     <div class="footer">
@@ -415,6 +496,25 @@
       document.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       currentFormat = btn.dataset.format;
+    }
+
+    function setTimeoutMode() {
+      const mode = document.getElementById('timeoutMode').value;
+      document.getElementById('timeoutMinutes').hidden = mode !== 'custom';
+    }
+
+    function getTimeoutOptions() {
+      const mode = document.getElementById('timeoutMode').value;
+      if (mode !== 'custom') return { timeout_mode: mode };
+
+      const minutes = Number(document.getElementById('timeoutMinutes').value);
+      if (!Number.isFinite(minutes) || minutes < 1) {
+        throw new Error('Timeout must be at least 1 minute');
+      }
+      return {
+        timeout_mode: 'custom',
+        timeout_seconds: Math.round(minutes * 60),
+      };
     }
 
     function parseUrls(text) {
@@ -568,7 +668,7 @@
       if (c.status === 'ready') {
         actionHtml = `<button class="card-dl-btn" onclick="dlCard(${idx})">Download</button>${qualityChips}`;
       } else if (c.status === 'downloading') {
-        actionHtml = `<span class="card-status downloading"><span class="spin"></span> Downloading...</span>`;
+        actionHtml = `<span class="card-status downloading"><span class="spin"></span> Downloading...</span>${renderProgress(c.progress)}`;
       } else if (c.status === 'done') {
         actionHtml = `<button class="card-dl-btn done" onclick="saveCard(${idx})">Save</button>
           <span class="card-status done">${esc(c.filename || '')}</span>`;
@@ -603,10 +703,40 @@
       renderCard(idx);
     }
 
+    function renderProgress(progress) {
+      const p = progress || {};
+      const percent = Number.isFinite(p.percent) ? Math.max(0, Math.min(100, p.percent)) : 0;
+      const details = [];
+      if (Number.isFinite(p.percent)) details.push(`${percent.toFixed(1)}%`);
+      if (p.speed) details.push(p.speed);
+      if (p.eta) details.push(`ETA ${p.eta}`);
+      const message = p.message && !String(p.message).includes('% of ') ? String(p.message) : '';
+
+      return `
+        <div class="progress-wrap">
+          <div class="progress-track">
+            <div class="progress-bar" style="width:${percent}%"></div>
+          </div>
+          <div class="progress-text">${esc(details.join(' · ') || 'Preparing download')}${message ? '<br>' + esc(message) : ''}</div>
+        </div>
+      `;
+    }
+
     async function dlCard(idx) {
       const c = cardData[idx];
+      let timeoutOptions;
+      try {
+        timeoutOptions = getTimeoutOptions();
+      } catch (err) {
+        c.status = 'error';
+        c.error = err.message;
+        renderCard(idx);
+        return;
+      }
+
       c.status = 'downloading';
       c.error = null;
+      c.progress = { percent: 0, message: 'Starting download' };
       renderCard(idx);
 
       try {
@@ -618,6 +748,7 @@
             format: currentFormat,
             format_id: c.selectedFormatId,
             title: c.title || '',
+            ...timeoutOptions,
           }),
         });
         const data = await res.json();
@@ -642,6 +773,15 @@
         try {
           const res = await fetch(`/api/status/${c.jobId}`);
           const data = await res.json();
+          if (!res.ok || data.error && !data.status) {
+            clearInterval(iv);
+            c.status = 'error';
+            c.error = data.error || 'Download job not found';
+            renderCard(idx);
+            return;
+          }
+          c.progress = data.progress || c.progress;
+          c.lastMessage = data.last_message || c.lastMessage;
           if (data.status === 'done') {
             clearInterval(iv);
             c.status = 'done';
@@ -652,6 +792,8 @@
             clearInterval(iv);
             c.status = 'error';
             c.error = data.error;
+            renderCard(idx);
+          } else {
             renderCard(idx);
           }
         } catch {
